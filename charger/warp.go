@@ -50,12 +50,12 @@ func NewWarpFromConfig(other map[string]interface{}) (api.Charger, error) {
 		totalEnergy = wb.totalEnergy
 	}
 
-	detect := provider.NewMqtt(wb.log, wb.client,
-		fmt.Sprintf("%s/evse/state", wb.root), 1, cc.Timeout,
+	detectNfc := provider.NewMqtt(wb.log, wb.client,
+		fmt.Sprintf("%s/evse/low_level_state", wb.root), 1, cc.Timeout,
 	).StringGetter()
 
 	var identity func() (string, error)
-	if state, err := detect(); err == nil {
+	if state, err := detectNfc(); err == nil {
 		var res warpLowLevelState
 		if err := json.Unmarshal([]byte(state), &res); err != nil {
 			return nil, err
