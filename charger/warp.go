@@ -20,6 +20,8 @@ const (
 	warpTimeout   = 30 * time.Second
 )
 
+//go:generate go run ../cmd/tools/decorate.go -f decorateWarp -b *Warp -r api.Charger -t "api.Meter,CurrentPower,func() (float64, error)" -t "api.MeterEnergy,TotalEnergy,func() (float64, error)" -t "api.Identifier,Identify,func() (string, error)"
+
 // NewWarpFromConfig creates a new configurable charger
 func NewWarpFromConfig(other map[string]interface{}) (api.Charger, error) {
 	cc := struct {
@@ -36,7 +38,7 @@ func NewWarpFromConfig(other map[string]interface{}) (api.Charger, error) {
 		return nil, err
 	}
 
-	m, err := NewWarp(cc.Config, cc.Topic, cc.Timeout)
+	wb, err := NewWarp(cc.Config, cc.Topic, cc.Timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -44,11 +46,27 @@ func NewWarpFromConfig(other map[string]interface{}) (api.Charger, error) {
 	var currentPower func() (float64, error)
 	var totalEnergy func() (float64, error)
 	if cc.UseMeter {
-		currentPower = m.currentPower
-		totalEnergy = m.totalEnergy
+		currentPower = wb.currentPower
+		totalEnergy = wb.totalEnergy
 	}
 
-	return decorateWarp(m, currentPower, totalEnergy), err
+	detect := provider.NewMqtt(wb.log, wb.client,
+		fmt.Sprintf("%s/evse/state", wb.root), 1, cc.Timeout,
+	).StringGetter()
+
+	var identity func() (string, error)
+	if state, err := detect(); err == nil {
+		var res warpLowLevelState
+		if err := json.Unmarshal([]byte(state), &res); err != nil {
+			return nil, err
+		}
+
+		if len(res.AdcValues) > 2 {
+			identity = wb.identify
+		}
+	}
+
+	return decorateWarp(wb, currentPower, totalEnergy, identity), err
 }
 
 // Warp configures generic charger and charge meter for an Warp loadpoint
@@ -59,12 +77,12 @@ type Warp struct {
 	enabledG    func() (string, error)
 	statusG     func() (string, error)
 	meterG      func() (string, error)
+	nfcG        func() (string, error)
 	enableS     func(bool) error
 	maxcurrentS func(int64) error
 	enabled     bool // cache
+	tag         warpNfcTag
 }
-
-//go:generate go run ../cmd/tools/decorate.go -f decorateWarp -b *Warp -r api.Charger -t "api.Meter,CurrentPower,func() (float64, error)" -t "api.MeterEnergy,TotalEnergy,func() (float64, error)"
 
 // NewWarp creates a new configurable charger
 func NewWarp(mqttconf mqtt.Config, topic string, timeout time.Duration) (*Warp, error) {
@@ -99,6 +117,7 @@ func NewWarp(mqttconf mqtt.Config, topic string, timeout time.Duration) (*Warp, 
 	m.enabledG = stringG(fmt.Sprintf("%s/evse/auto_start_charging", topic))
 	m.statusG = stringG(fmt.Sprintf("%s/evse/state", topic))
 	m.meterG = stringG(fmt.Sprintf("%s/meter/state", topic))
+	m.nfcG = stringG(fmt.Sprintf("%s/nfc/seen_tags", topic))
 
 	m.enableS = provider.NewMqtt(log, client,
 		fmt.Sprintf("%s/evse/auto_start_charging_update", topic), 1, 0).
@@ -124,6 +143,15 @@ type warpStatus struct {
 	LockState              int   `json:"lock_state"`
 	TimeSinceStateChange   int64 `json:"time_since_state_change"`
 	Uptime                 int64 `json:"uptime"`
+}
+
+type warpLowLevelState struct {
+	LedState       int   `json:"led_state"`
+	CpPwmDutyCycle int   `json:"cp_pwm_duty_cycle"`
+	AdcValues      []int `json:"adc_values"`
+	Voltages       []int
+	Resistances    []int
+	Gpio           []bool
 }
 
 // Enable implements the api.Charger interface
@@ -285,4 +313,27 @@ func (m *Warp) totalEnergy() (float64, error) {
 	}
 
 	return res.EnergyAbs, err
+}
+
+type warpNfcTag struct {
+	Type     int    `json:"tag_type"`
+	ID       []byte `json:"tag_id"`
+	LastSeen int64  `json:"last_seen"`
+}
+
+func (m *Warp) identify() (string, error) {
+	var tags []warpNfcTag
+
+	s, err := m.nfcG()
+	if err == nil {
+		err = json.Unmarshal([]byte(s), &tags)
+	}
+
+	for _, tag := range tags {
+		if tag.LastSeen > m.tag.LastSeen {
+			m.tag = tag
+		}
+	}
+
+	return string(m.tag.ID), err
 }
