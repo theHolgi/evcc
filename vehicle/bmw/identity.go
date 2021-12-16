@@ -13,6 +13,7 @@ import (
 	"github.com/evcc-io/evcc/util"
 	"github.com/evcc-io/evcc/util/oauth"
 	"github.com/evcc-io/evcc/util/request"
+	"github.com/jpfielding/go-http-digest/pkg/digest"
 	"golang.org/x/oauth2"
 )
 
@@ -48,14 +49,18 @@ func (v *Identity) Login(user, password string) error {
 
 func (v *Identity) RefreshToken(_ *oauth2.Token) (*oauth2.Token, error) {
 	data := url.Values{
+		"client_id":     []string{"31c357a0-7a1d-4590-aa99-33b97244d048"},
+		"response_type": []string{"code"},
+		"scope":         []string{"authenticate_user vehicle_data remote_services"},
+		"redirect_uri":  []string{"com.bmw.connected://oauth"},
+		"state":         []string{"cwU-gIE27j67poy2UcL3KQ"},
+		"nonce":         []string{"login_nonce"},
 		"username":      []string{v.user},
 		"password":      []string{v.password},
-		"client_id":     []string{"31c357a0-7a1d-4590-aa99-33b97244d048"},
-		"redirect_uri":  []string{"com.bmw.connected://oauth"},
-		"response_type": []string{"token"},
-		"scope":         []string{"authenticate_user vehicle_data remote_services"},
-		"nonce":         []string{"login_nonce"},
+		"grant_type":    []string{"authorization_code"},
 	}
+
+	v.Client.Transport = digest.NewTransport(v.user, v.password, v.Client.Transport)
 
 	req, err := request.New(http.MethodPost, AuthURI, strings.NewReader(data.Encode()), request.URLEncoding)
 	if err != nil {
