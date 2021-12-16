@@ -49,20 +49,24 @@ func (v *Identity) Login(user, password string) error {
 
 func (v *Identity) RefreshToken(_ *oauth2.Token) (*oauth2.Token, error) {
 	data := url.Values{
-		"client_id":     []string{"31c357a0-7a1d-4590-aa99-33b97244d048"},
-		"response_type": []string{"code"},
-		"scope":         []string{"authenticate_user vehicle_data remote_services"},
-		"redirect_uri":  []string{"com.bmw.connected://oauth"},
-		"state":         []string{"cwU-gIE27j67poy2UcL3KQ"},
-		"nonce":         []string{"login_nonce"},
-		"username":      []string{v.user},
-		"password":      []string{v.password},
-		"grant_type":    []string{"authorization_code"},
+		"client_id":             []string{"31c357a0-7a1d-4590-aa99-33b97244d048"},
+		"response_type":         []string{"code"},
+		"scope":                 []string{"authenticate_user vehicle_data remote_services"},
+		"redirect_uri":          []string{"com.bmw.connected://oauth"},
+		"state":                 []string{"cwU-gIE27j67poy2UcL3KQ"},
+		"nonce":                 []string{"login_nonce"},
+		"code_challenge_method": []string{"S256"},
+		"username":              []string{v.user},
+		"password":              []string{v.password},
+		"grant_type":            []string{"authorization_code"},
 	}
 
 	v.Client.Transport = digest.NewTransport(v.user, v.password, v.Client.Transport)
 
-	req, err := request.New(http.MethodPost, AuthURI, strings.NewReader(data.Encode()), request.URLEncoding)
+	req, err := request.New(http.MethodPost, AuthURI, strings.NewReader(data.Encode()), map[string]string{
+		"Accept":       "application/json, text/plain, */*",
+		"Content-Type": "application/x-www-form-urlencoded",
+	})
 	if err != nil {
 		return nil, err
 	}
