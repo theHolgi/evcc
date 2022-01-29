@@ -217,7 +217,12 @@ func (lp *LoadPoint) setRemainingDuration(chargeRemainingDuration time.Duration)
 
 	if lp.chargeRemainingDuration != chargeRemainingDuration {
 		lp.chargeRemainingDuration = chargeRemainingDuration
-		lp.publish("chargeRemainingDuration", chargeRemainingDuration)
+
+		if chargeRemainingDuration < 0 {
+			lp.publish("chargeRemainingDuration", nil)
+		} else {
+			lp.publish("chargeRemainingDuration", chargeRemainingDuration)
+		}
 	}
 }
 
