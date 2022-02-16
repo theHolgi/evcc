@@ -236,8 +236,9 @@ func NewLoadPointFromConfig(log *util.Logger, cp configProvider, other map[strin
 	lp.configureChargerType(lp.charger)
 
 	// ensure 1p setup for switchable charger (https://github.com/evcc-io/evcc/issues/1572)
-	if _, ok := lp.charger.(api.ChargePhases); ok && lp.Phases != 0 {
-		lp.log.WARN.Printf("ignoring phases config (%dp) for switchable charger", lp.Phases)
+	// TODO handle delayed scale-down
+	if _, ok := lp.charger.(api.ChargePhases); ok && lp.GetPhases() != 0 {
+		lp.log.WARN.Printf("ignoring phases config (%dp) for switchable charger", lp.GetPhases())
 		lp.setPhases(0)
 	}
 
@@ -424,6 +425,10 @@ func (lp *LoadPoint) evVehicleConnectHandler() {
 func (lp *LoadPoint) evVehicleDisconnectHandler() {
 	lp.log.INFO.Println("car disconnected")
 
+	// phases are unknown when vehicle disconnects
+	lp.activePhases = 0
+	lp.publish("activePhases", lp.activePhases)
+
 	// energy and duration
 	lp.publish("chargedEnergy", lp.chargedEnergy)
 	lp.publish("connectedDuration", lp.clock.Since(lp.connectedTime))
@@ -476,6 +481,7 @@ func (lp *LoadPoint) evChargeCurrentHandler(current float64) {
 // If physical charge meter is present this handler is not used.
 // The actual value is published by the evChargeCurrentHandler
 func (lp *LoadPoint) evChargeCurrentWrappedMeterHandler(current float64) {
+	// TODO check lp.activePhases
 	power := current * float64(lp.activePhases) * Voltage
 
 	if !lp.enabled || lp.GetStatus() != api.StatusC {
@@ -516,9 +522,6 @@ func (lp *LoadPoint) Prepare(uiChan chan<- util.Param, pushChan chan<- push.Even
 	lp.uiChan = uiChan
 	lp.pushChan = pushChan
 	lp.lpChan = lpChan
-
-	// assume all phases are active
-	lp.activePhases = lp.Phases
 
 	// event handlers
 	_ = lp.bus.Subscribe(evChargeStart, lp.evChargeStartHandler)
@@ -815,8 +818,6 @@ func (lp *LoadPoint) setActiveVehicle(vehicle api.Vehicle) {
 
 		lp.applyAction(vehicle.OnIdentified())
 
-		lp.setVehiclePhases()
-
 		lp.progress.Reset()
 	} else {
 		lp.socEstimator = nil
@@ -983,180 +984,6 @@ func (lp *LoadPoint) resetPVTimerIfRunning(typ ...string) {
 	lp.publishTimer(pvTimer, 0, timerInactive)
 }
 
-// setVehiclePhases sets the expected active phases by the vehicle
-func (lp *LoadPoint) setVehiclePhases() {
-	if v, ok := lp.vehicle.(api.VehiclePhases); ok {
-		if phases := v.Phases(); phases > 0 {
-			lp.log.DEBUG.Printf("vehicle phases: %dp", phases)
-
-			lp.Lock()
-			defer lp.Unlock()
-
-			if phases > lp.Phases {
-				phases = lp.Phases
-			}
-
-			lp.activePhases = phases
-			lp.publish("activePhases", lp.activePhases)
-		}
-	}
-}
-
-// scalePhasesIfAvailable scales if api.ChargePhases is available
-func (lp *LoadPoint) scalePhasesIfAvailable(phases int) error {
-	err := lp.scalePhases(phases)
-	if errors.Is(err, api.ErrNotAvailable) {
-		return nil
-	}
-	return err
-}
-
-// setPhases sets the number of enabled phases without modifying the charger
-func (lp *LoadPoint) setPhases(phases int) {
-	lp.Lock()
-	defer lp.Unlock()
-
-	if lp.Phases != phases {
-		lp.Phases = phases
-		lp.publish("phases", lp.Phases)
-
-		if phases < lp.activePhases {
-			// When scaling down, charger will temporarily disable. During this time, activePhases will not be updated
-			// since all currents are zero. This will lead to inconsistent state when scaling is triggered again
-			// (1p configured vs 3p active). Update activePhases to reflect the current state of the charger.
-			lp.activePhases = phases
-			lp.publish("activePhases", lp.activePhases)
-		} else {
-			// When scaling up, charger will offer more phases than vehicle can use.
-			// Adjust to enable subsequent PV restart at lower powers than full 3p.
-			lp.setVehiclePhases()
-		}
-	}
-}
-
-// scalePhases adjusts the number of active phases and returns the appropriate charging current.
-// Returns api.ErrNotAvailable if api.ChargePhases is not available.
-func (lp *LoadPoint) scalePhases(phases int) error {
-	if phases != 1 && phases != 3 {
-		return fmt.Errorf("invalid number of phases: %d", phases)
-	}
-
-	cp, ok := lp.charger.(api.ChargePhases)
-	if !ok {
-		return api.ErrNotAvailable
-	}
-
-	if lp.GetPhases() != phases {
-		// disable charger - this will also stop the car charging using the api if available
-		if err := lp.setLimit(0, true); err != nil {
-			return err
-		}
-
-		// switch phases
-		if err := cp.Phases1p3p(phases); err != nil {
-			return fmt.Errorf("switch phases: %w", err)
-		}
-
-		// update setting
-		lp.setPhases(phases)
-
-		// disable phase timer
-		lp.phaseTimer = time.Time{}
-
-		// allow pv mode to re-enable charger right away
-		lp.elapsePVTimer()
-	}
-
-	return nil
-}
-
-// pvScalePhases switches phases if necessary and returns if switch occurred
-func (lp *LoadPoint) pvScalePhases(availablePower, minCurrent, maxCurrent float64) bool {
-	phases := lp.GetPhases()
-
-	// observed phase state inconsistency (https://github.com/evcc-io/evcc/issues/1572, https://github.com/evcc-io/evcc/issues/2230)
-	if phases > 0 && phases < lp.activePhases {
-		lp.log.WARN.Printf("ignoring inconsistent phases: %dp < %dp observed active", phases, lp.activePhases)
-
-		// if 3p->1p change is slow and we're no longer charging, we'll correct the observed phases here
-		if lp.GetStatus() == api.StatusB {
-			lp.activePhases = 1
-		}
-	}
-
-	// this can happen the first time for a 1p3p-capable charger, see https://github.com/evcc-io/evcc/issues/2520
-	if phases == 0 && lp.activePhases == 0 {
-		lp.log.DEBUG.Printf("assuming initial phase state: 3p")
-		lp.phaseTimer = elapsed
-		lp.activePhases = 3
-	}
-
-	var waiting bool
-	targetCurrent := powerToCurrent(availablePower, lp.activePhases)
-
-	// scale down phases
-	if targetCurrent < minCurrent && (phases == 0 || phases == 3) && lp.activePhases > 1 {
-		lp.log.DEBUG.Printf("available power below %dp min threshold of %.0fW", lp.activePhases, float64(lp.activePhases)*Voltage*minCurrent)
-
-		if lp.phaseTimer.IsZero() {
-			lp.log.DEBUG.Printf("start phase disable timer: %v", lp.Disable.Delay)
-			lp.phaseTimer = lp.clock.Now()
-		}
-
-		lp.publishTimer(phaseTimer, lp.Disable.Delay, phaseScale1p)
-
-		elapsed := lp.clock.Since(lp.phaseTimer)
-		if elapsed >= lp.Disable.Delay {
-			lp.log.DEBUG.Println("phase disable timer elapsed")
-			if err := lp.scalePhases(1); err == nil {
-				lp.log.DEBUG.Printf("switched phases: 1p @ %.0fW", availablePower)
-				return true
-			} else {
-				lp.log.ERROR.Printf("switch phases: %v", err)
-			}
-		}
-
-		waiting = true
-		lp.log.DEBUG.Printf("phase disable timer remaining: %v", (lp.Disable.Delay - elapsed).Round(time.Second))
-	}
-
-	// scale up phases
-	if min3pCurrent := powerToCurrent(availablePower, 3); min3pCurrent >= minCurrent && (phases == 0 || phases == 1) {
-		lp.log.DEBUG.Printf("available power above 3p min threshold of %.0fW", 3*Voltage*minCurrent)
-
-		if lp.phaseTimer.IsZero() {
-			lp.log.DEBUG.Printf("start phase enable timer: %v", lp.Enable.Delay)
-			lp.phaseTimer = lp.clock.Now()
-		}
-
-		lp.publishTimer(phaseTimer, lp.Disable.Delay, phaseScale3p)
-
-		elapsed := lp.clock.Since(lp.phaseTimer)
-		if elapsed >= lp.Disable.Delay {
-			lp.log.DEBUG.Println("phase enable timer elapsed")
-			if err := lp.scalePhases(3); err == nil {
-				lp.log.DEBUG.Printf("switched phases: 3p @ %.0fW", availablePower)
-				return true
-			} else {
-				lp.log.ERROR.Printf("switch phases: %v", err)
-			}
-		}
-
-		waiting = true
-		lp.log.DEBUG.Printf("phase enable timer remaining: %v", (lp.Disable.Delay - elapsed).Round(time.Second))
-	}
-
-	// reset timer to disabled state
-	if !waiting && !lp.phaseTimer.IsZero() {
-		lp.log.DEBUG.Printf("phase timer reset")
-		lp.phaseTimer = time.Time{}
-
-		lp.publishTimer(phaseTimer, 0, timerInactive)
-	}
-
-	return false
-}
-
 func (lp *LoadPoint) publishTimer(name string, delay time.Duration, action string) {
 	timer := lp.pvTimer
 	if name == phaseTimer {
@@ -1196,10 +1023,10 @@ func (lp *LoadPoint) pvMaxCurrent(mode api.ChargeMode, sitePower float64, batter
 
 	// calculate target charge current from delta power and actual current
 	effectiveCurrent := lp.effectiveCurrent()
-	deltaCurrent := powerToCurrent(-sitePower, lp.activePhases)
+	deltaCurrent := powerToCurrent(-sitePower, lp.effectivePhases())
 	targetCurrent := math.Max(effectiveCurrent+deltaCurrent, 0)
 
-	lp.log.DEBUG.Printf("max charge current: %.3gA = %.3gA + %.3gA (%.0fW @ %dp)", targetCurrent, effectiveCurrent, deltaCurrent, sitePower, lp.activePhases)
+	lp.log.DEBUG.Printf("max charge current: %.3gA = %.3gA + %.3gA (%.0fW @ %dp)", targetCurrent, effectiveCurrent, deltaCurrent, sitePower, lp.effectivePhases())
 
 	// in MinPV mode or under special conditions return at least minCurrent
 	if (mode == api.ModeMinPV || batteryBuffered || lp.climateActive()) && targetCurrent < minCurrent {
