@@ -20,15 +20,20 @@ func (lp *LoadPoint) setPhases(phases int) {
 }
 
 // effectivePhases returns the number of expectedly active phases for the meter.
-// If unkown for 1p3p chargers during startup it will assume 1p.
+// If unknown for 1p3p chargers during startup it will assume 1p.
 func (lp *LoadPoint) effectivePhases() int {
-	if phases := lp.vehicleCapablePhases(); phases > 0 {
-		return phases
+	const unknownPhases = 1
+
+	vehicle := lp.vehicleCapablePhases()
+	physical := lp.GetPhases()
+
+	if vehicle > 0 && (vehicle <= physical || physical == 0) {
+		return vehicle
 	}
 
 	// if we don't have a valid value yet assume phase configuration
-	if phases := lp.GetPhases(); phases > 0 {
-		return phases
+	if physical > 1 {
+		return unknownPhases
 	}
 
 	// assume 1p for switchable charger during startup
@@ -36,8 +41,10 @@ func (lp *LoadPoint) effectivePhases() int {
 }
 
 func (lp *LoadPoint) vehicleCapablePhases() int {
-	if v, ok := lp.vehicle.(api.VehiclePhases); ok {
-		return v.Phases()
+	if lp.vehicle != nil {
+		if phases := lp.vehicle.Phases(); phases > 0 {
+			return phases
+		}
 	}
 
 	// if vehicle is charging >1p then assume that is the

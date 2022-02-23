@@ -143,6 +143,7 @@ type Vehicle interface {
 	Battery
 	Title() string
 	Capacity() int64
+	Phases() int
 	Identifiers() []string
 	OnIdentified() ActionConfig
 }
@@ -170,11 +171,6 @@ type VehicleOdometer interface {
 // VehiclePosition returns the vehicles position in latitude and longitude
 type VehiclePosition interface {
 	Position() (float64, float64, error)
-}
-
-// VehiclePhases returns the number of supported phases
-type VehiclePhases interface {
-	Phases() int
 }
 
 // VehicleStartCharge starts the charging session on the vehicle side
