@@ -22,22 +22,27 @@ func TestEffectivePhases(t *testing.T) {
 	tcs := []struct {
 		capable, physical, vehicle, expected int
 	}{
+		// 1p
 		{1, 1, 0, 1},
 		{1, 1, 1, 1},
 		{1, 1, 2, 1},
 		{1, 1, 3, 1},
+		// 3p
 		{3, 3, 0, 1}, // Annahme
 		{3, 3, 1, 1},
 		{3, 3, 2, 2},
 		{3, 3, 3, 3},
+		// 1p3p initial
 		{0, 0, 0, 1}, // TODO Annahme gelbe Markierung
 		{0, 0, 1, 1},
 		{0, 0, 2, 2},
 		{0, 0, 3, 3},
+		// 1p3p 1 configured
 		{0, 1, 0, 1}, // Annahme
 		{0, 1, 1, 1},
 		{0, 1, 2, 1},
 		{0, 1, 3, 1},
+		// 1p3p 3 configured
 		{0, 3, 0, 1}, // Annahme
 		{0, 3, 1, 1},
 		{0, 3, 2, 2},
@@ -77,9 +82,8 @@ func TestEffectivePhases(t *testing.T) {
 			MinCurrent:  minA,
 			MaxCurrent:  maxA,
 			vehicle:     vehicle, // needed for targetSoC check
-			// socEstimator: socEstimator, // instead of vehicle: vehicle,
-			Mode:   api.ModeNow,
-			Phases: tc.physical,
+			Mode:        api.ModeNow,
+			Phases:      tc.physical,
 		}
 
 		attachListeners(t, lp)
