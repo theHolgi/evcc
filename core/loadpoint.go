@@ -1023,10 +1023,11 @@ func (lp *LoadPoint) pvMaxCurrent(mode api.ChargeMode, sitePower float64, batter
 
 	// calculate target charge current from delta power and actual current
 	effectiveCurrent := lp.effectiveCurrent()
-	deltaCurrent := powerToCurrent(-sitePower, lp.effectivePhases())
+	effectivePhases := lp.effectivePhases()
+	deltaCurrent := powerToCurrent(-sitePower, effectivePhases)
 	targetCurrent := math.Max(effectiveCurrent+deltaCurrent, 0)
 
-	lp.log.DEBUG.Printf("max charge current: %.3gA = %.3gA + %.3gA (%.0fW @ %dp)", targetCurrent, effectiveCurrent, deltaCurrent, sitePower, lp.effectivePhases())
+	lp.log.DEBUG.Printf("max charge current: %.3gA = %.3gA + %.3gA (%.0fW @ %dp)", targetCurrent, effectiveCurrent, deltaCurrent, sitePower, effectivePhases)
 
 	// in MinPV mode or under special conditions return at least minCurrent
 	if (mode == api.ModeMinPV || batteryBuffered || lp.climateActive()) && targetCurrent < minCurrent {
