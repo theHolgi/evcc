@@ -22,22 +22,24 @@ func (lp *LoadPoint) setPhases(phases int) {
 // activePhases returns the number of expectedly active phases for the meter.
 // If unknown for 1p3p chargers during startup it will assume 1p.
 func (lp *LoadPoint) activePhases() int {
+	// assume 3p for switchable charger during startup
 	const unknownPhases = 1
 
 	vehicle := lp.vehicleCapablePhases()
 	physical := lp.GetPhases()
 
+	// vehicle determines expected phases if smaller than physical or physical is unknown
 	if vehicle > 0 && (vehicle <= physical || physical == 0) {
 		return vehicle
 	}
 
 	// if we don't have a valid value yet assume phase configuration
-	if physical > 1 {
+	if physical == 0 {
 		return unknownPhases
 	}
 
-	// assume 1p for switchable charger during startup
-	return 1
+	// assume 3p if no better better value available
+	return unknownPhases
 }
 
 func (lp *LoadPoint) vehicleCapablePhases() int {
@@ -110,13 +112,6 @@ func (lp *LoadPoint) pvScalePhases(availablePower, minCurrent, maxCurrent float6
 		lp.log.WARN.Printf("ignoring inconsistent phases: %dp < %dp observed active", phases, lp.measuredPhases)
 	}
 
-	// this can happen the first time for a 1p3p-capable charger, see https://github.com/evcc-io/evcc/issues/2520
-	// if phases == 0 && lp.activePhases == 0 {
-	// 	lp.log.DEBUG.Printf("assuming initial phase state: 3p")
-	// 	lp.phaseTimer = elapsed
-	// 	lp.activePhases = 3
-	// }
-
 	var waiting bool
 	activePhases := lp.activePhases()
 	targetCurrent := powerToCurrent(availablePower, activePhases)
@@ -147,8 +142,11 @@ func (lp *LoadPoint) pvScalePhases(availablePower, minCurrent, maxCurrent float6
 		lp.log.DEBUG.Printf("phase disable timer remaining: %v", (lp.Disable.Delay - elapsed).Round(time.Second))
 	}
 
+	vehiclePhases := lp.vehicleCapablePhases()
+	vehicleScalable := vehiclePhases == 0 || vehiclePhases > 1
+
 	// scale up phases
-	if min3pCurrent := powerToCurrent(availablePower, 3); min3pCurrent >= minCurrent && activePhases == 1 {
+	if min3pCurrent := powerToCurrent(availablePower, 3); min3pCurrent >= minCurrent && activePhases == 1 && vehicleScalable {
 		lp.log.DEBUG.Printf("available power above 3p min threshold of %.0fW", 3*Voltage*minCurrent)
 
 		if lp.phaseTimer.IsZero() {

@@ -116,7 +116,7 @@ type LoadPoint struct {
 	GuardDuration time.Duration // charger enable/disable minimum holding time
 
 	enabled                bool      // Charger enabled state
-	measuredPhases         int       // Charger active phases as used by vehicle
+	measuredPhases         int       // Charger physically measured phases
 	chargeCurrent          float64   // Charger current limit
 	guardUpdated           time.Time // Charger enabled/disabled timestamp
 	socUpdated             time.Time // SoC updated timestamp (poll: connected)

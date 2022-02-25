@@ -13,18 +13,29 @@ import (
 	"github.com/golang/mock/gomock"
 )
 
-func TestEffectivePhases(t *testing.T) {
+type testCase struct {
+	// capable=0 signals 1p3p as set during loadpoint init
+	// physical/vehicle=0 signals unknown
+	// previousActive<>0 signals previous measurement
+	capable, physical, vehicle, previousActive, expected int
+}
+
+func caseMatches(tc testCase, cases []testCase) bool {
+	for _, tc2 := range cases {
+		if reflect.DeepEqual(tc, tc2) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPhaseHandling(t *testing.T) {
 	const unknownPhases = 1
 
 	clock := clock.NewMock()
 	ctrl := gomock.NewController(t)
 
-	tcs := []struct {
-		// capable=0 signals 1p3p as set during loadpoint init
-		// physical/vehicle=0 signals unknown
-		// previousActive<>0 signals previous measurement
-		capable, physical, vehicle, previousActive, expected int
-	}{
+	tcs := []testCase{
 		// 1p
 		{1, 1, 0, 0, 1},
 		{1, 1, 0, 1, 1},
@@ -65,7 +76,7 @@ func TestEffectivePhases(t *testing.T) {
 		{0, 3, 3, 0, 3},
 	}
 
-	scaleDown := []struct{ capable, physical, vehicle, previousActive, expected int }{
+	scaleDown := []testCase{
 		// 1p3p initial
 		{0, 0, 0, 2, 2}, // TODO gelbe Markierung
 		{0, 0, 0, 3, 3}, // TODO gelbe Markierung
@@ -81,16 +92,22 @@ func TestEffectivePhases(t *testing.T) {
 		{0, 3, 3, 0, 3},
 	}
 
-	scaleUp := []struct{ capable, physical, vehicle, previousActive, expected int }{
+	scaleUp := []testCase{
 		// 1p3p initial
+		{0, 0, 0, 0, 1},
 		{0, 0, 0, 1, 1},
+		{0, 0, 0, 2, 2}, // TODO gelbe Markierung
+		{0, 0, 0, 3, 3}, // TODO gelbe Markierung
 		{0, 0, 2, 0, 2},
 		{0, 0, 3, 0, 3},
 		// 1p3p, 1 currently active
 		{0, 1, 0, 0, unknownPhases},
+		{0, 1, 0, 1, 1},
 		{0, 1, 2, 0, 1},
 		{0, 1, 3, 0, 1},
 		// 1p3p, 3 currently active
+		{0, 3, 0, 0, unknownPhases}, // TODO remove: Fehler bei scaleUp
+		{0, 3, 0, 1, 1},             // TODO remove: Fehler bei scaleUp
 		{0, 3, 0, 2, 2},
 		{0, 3, 0, 3, 3},
 		{0, 3, 2, 0, 2},
@@ -153,33 +170,40 @@ func TestEffectivePhases(t *testing.T) {
 		// scaling
 		if charger.MockChargePhases != nil {
 			// scale down
-			for _, tc2 := range scaleDown {
-				if reflect.DeepEqual(tc, tc2) {
-					charger.MockCharger.EXPECT().Enable(false).Return(nil)
-					charger.MockChargePhases.EXPECT().Phases1p3p(1).Return(nil)
+			min1p := 1 * minA * Voltage
+			lp.phaseTimer = time.Time{}
 
-					if !lp.pvScalePhases(1*minA*Voltage, minA, maxA) {
-						t.Errorf("%v missing scale down", tc)
-					}
+			charger.MockCharger.EXPECT().Enable(false).Return(nil).MaxTimes(1)
+			charger.MockChargePhases.EXPECT().Phases1p3p(1).Return(nil).MaxTimes(1)
 
-					break
+			if caseMatches(tc, scaleDown) {
+				if !lp.pvScalePhases(min1p, minA, maxA) {
+					t.Errorf("%v missing scale down", tc)
+				}
+			} else {
+				if lp.pvScalePhases(min1p, minA, maxA) {
+					t.Errorf("%v unexpected scale down", tc)
 				}
 			}
+			ctrl.Finish()
 
 			// scale up
+			min3p := 3 * minA * Voltage
 			lp.phaseTimer = time.Time{}
-			for _, tc2 := range scaleUp {
-				if reflect.DeepEqual(tc, tc2) {
-					charger.MockCharger.EXPECT().Enable(false).Return(nil)
-					charger.MockChargePhases.EXPECT().Phases1p3p(3).Return(nil)
 
-					if !lp.pvScalePhases(3*minA*Voltage, minA, maxA) {
-						t.Errorf("%v missing scale up", tc)
-					}
+			charger.MockCharger.EXPECT().Enable(false).Return(nil).MaxTimes(1)
+			charger.MockChargePhases.EXPECT().Phases1p3p(3).Return(nil).MaxTimes(1)
 
-					break
+			if caseMatches(tc, scaleUp) {
+				if !lp.pvScalePhases(min3p, minA, maxA) {
+					t.Errorf("%v missing scale up", tc)
+				}
+			} else {
+				if lp.pvScalePhases(min3p, minA, maxA) {
+					t.Errorf("%v unexpected scale up", tc)
 				}
 			}
+			ctrl.Finish()
 		}
 
 		ctrl.Finish()
