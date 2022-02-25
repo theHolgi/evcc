@@ -76,7 +76,7 @@ docker:
 publish-testing:
 	@echo Version: $(VERSION) $(SHA) $(BUILD_DATE)
 	seihon publish --dry-run=false --template docker/tmpl.Dockerfile --base-runtime-image alpine:$(ALPINE_VERSION) \
-	   --image-name $(DOCKER_IMAGE) -v "testing" --targets=$(TARGETS)
+	   --image-name $(DOCKER_IMAGE) -v "testing" --targets=amd64
 
 publish-latest:
 	@echo Version: $(VERSION) $(SHA) $(BUILD_DATE)

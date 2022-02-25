@@ -427,7 +427,7 @@ func (lp *LoadPoint) evVehicleDisconnectHandler() {
 
 	// phases are unknown when vehicle disconnects
 	lp.measuredPhases = 0
-	lp.publish("activePhases", lp.activePhases)
+	lp.publish("activePhases", lp.measuredPhases)
 
 	// energy and duration
 	lp.publish("chargedEnergy", lp.chargedEnergy)
@@ -536,7 +536,7 @@ func (lp *LoadPoint) Prepare(uiChan chan<- util.Param, pushChan chan<- push.Even
 	lp.publish("minCurrent", lp.MinCurrent)
 	lp.publish("maxCurrent", lp.MaxCurrent)
 	lp.publish("phases", lp.Phases)
-	lp.publish("activePhases", lp.activePhases)
+	lp.publish("activePhases", lp.measuredPhases)
 	lp.publish("hasVehicle", len(lp.vehicles) > 0)
 
 	lp.Lock()
