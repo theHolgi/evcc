@@ -1,6 +1,7 @@
 package core
 
 import (
+	"reflect"
 	"testing"
 
 	evbus "github.com/asaskevich/EventBus"
@@ -48,8 +49,8 @@ func TestEffectivePhases(t *testing.T) {
 		// 1p3p, 1 currently active
 		{0, 1, 0, 0, unknownPhases},
 		{0, 1, 0, 1, 1},
-		// {0, 1, 0, 2, 2}, // must not happen
-		// {0, 1, 0, 3, 3}, // must not happen
+		// {0, 1, 0, 2, 2}, // 2p active > 1p configured must not happen
+		// {0, 1, 0, 3, 3}, // 3p active > 1p configured must not happen
 		{0, 1, 1, 0, 1},
 		{0, 1, 2, 0, 1},
 		{0, 1, 3, 0, 1},
@@ -59,6 +60,24 @@ func TestEffectivePhases(t *testing.T) {
 		{0, 3, 0, 2, 2},
 		{0, 3, 0, 3, 3},
 		{0, 3, 1, 0, 1},
+		{0, 3, 2, 0, 2},
+		{0, 3, 3, 0, 3},
+	}
+
+	scaleDown := []struct {
+		capable, physical, vehicle, previousActive, expected int
+	}{
+		// 1p3p initial
+		{0, 0, 0, 2, 2}, // TODO gelbe Markierung
+		{0, 0, 0, 3, 3}, // TODO gelbe Markierung
+		{0, 0, 2, 0, 2},
+		{0, 0, 3, 0, 3},
+		// 1p3p, 1 currently active
+		{0, 1, 0, 2, 2},
+		{0, 1, 0, 3, 3},
+		// 1p3p, 3 currently active
+		{0, 3, 0, 2, 2},
+		{0, 3, 0, 3, 3},
 		{0, 3, 2, 0, 2},
 		{0, 3, 3, 0, 3},
 	}
@@ -81,7 +100,7 @@ func TestEffectivePhases(t *testing.T) {
 		}
 
 		vehicle := mock.NewMockVehicle(ctrl)
-		vehicle.EXPECT().Phases().Return(tc.vehicle)
+		vehicle.EXPECT().Phases().Return(tc.vehicle).MinTimes(1)
 
 		lp := &LoadPoint{
 			log:         util.NewLogger("foo"),
@@ -103,14 +122,35 @@ func TestEffectivePhases(t *testing.T) {
 		attachListeners(t, lp)
 
 		// TODO reset activePhases when vehicle disconnects
-		lp.activePhases = tc.previousActive
+		lp.measuredPhases = tc.previousActive
+		if tc.previousActive > 0 && tc.vehicle > 0 {
+			t.Fatalf("%v invalid test case", tc)
+		}
 
 		if lp.Phases != tc.physical {
 			t.Error("wrong phases", lp.Phases, tc.physical)
 		}
 
-		if phs := lp.effectivePhases(); phs != tc.expected {
+		if phs := lp.activePhases(); phs != tc.expected {
 			t.Errorf("expected %d, got %d", tc.expected, phs)
 		}
+
+		// check scale down
+		if charger.MockChargePhases != nil {
+			for _, tc2 := range scaleDown {
+				if reflect.DeepEqual(tc, tc2) {
+					charger.MockCharger.EXPECT().Enable(false).Return(nil)
+					charger.MockChargePhases.EXPECT().Phases1p3p(1).Return(nil)
+
+					if !lp.pvScalePhases(-4*minA*Voltage, minA, maxA) {
+						t.Errorf("%v missing scale down", tc)
+					}
+
+					break
+				}
+			}
+		}
+
+		ctrl.Finish()
 	}
 }

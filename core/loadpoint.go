@@ -116,7 +116,7 @@ type LoadPoint struct {
 	GuardDuration time.Duration // charger enable/disable minimum holding time
 
 	enabled                bool      // Charger enabled state
-	activePhases           int       // Charger active phases as used by vehicle
+	measuredPhases         int       // Charger active phases as used by vehicle
 	chargeCurrent          float64   // Charger current limit
 	guardUpdated           time.Time // Charger enabled/disabled timestamp
 	socUpdated             time.Time // SoC updated timestamp (poll: connected)
@@ -426,7 +426,7 @@ func (lp *LoadPoint) evVehicleDisconnectHandler() {
 	lp.log.INFO.Println("car disconnected")
 
 	// phases are unknown when vehicle disconnects
-	lp.activePhases = 0
+	lp.measuredPhases = 0
 	lp.publish("activePhases", lp.activePhases)
 
 	// energy and duration
@@ -482,7 +482,7 @@ func (lp *LoadPoint) evChargeCurrentHandler(current float64) {
 // The actual value is published by the evChargeCurrentHandler
 func (lp *LoadPoint) evChargeCurrentWrappedMeterHandler(current float64) {
 	// TODO check lp.activePhases
-	power := current * float64(lp.activePhases) * Voltage
+	power := current * float64(lp.activePhases()) * Voltage
 
 	if !lp.enabled || lp.GetStatus() != api.StatusC {
 		// if disabled we cannot be charging
@@ -1023,11 +1023,11 @@ func (lp *LoadPoint) pvMaxCurrent(mode api.ChargeMode, sitePower float64, batter
 
 	// calculate target charge current from delta power and actual current
 	effectiveCurrent := lp.effectiveCurrent()
-	effectivePhases := lp.effectivePhases()
-	deltaCurrent := powerToCurrent(-sitePower, effectivePhases)
+	activePhases := lp.activePhases()
+	deltaCurrent := powerToCurrent(-sitePower, activePhases)
 	targetCurrent := math.Max(effectiveCurrent+deltaCurrent, 0)
 
-	lp.log.DEBUG.Printf("max charge current: %.3gA = %.3gA + %.3gA (%.0fW @ %dp)", targetCurrent, effectiveCurrent, deltaCurrent, sitePower, effectivePhases)
+	lp.log.DEBUG.Printf("max charge current: %.3gA = %.3gA + %.3gA (%.0fW @ %dp)", targetCurrent, effectiveCurrent, deltaCurrent, sitePower, activePhases)
 
 	// in MinPV mode or under special conditions return at least minCurrent
 	if (mode == api.ModeMinPV || batteryBuffered || lp.climateActive()) && targetCurrent < minCurrent {
@@ -1162,9 +1162,9 @@ func (lp *LoadPoint) updateChargeCurrents() {
 		}
 
 		if phases >= 1 {
-			lp.activePhases = phases
-			lp.log.DEBUG.Printf("detected phases: %dp %.3gA", lp.activePhases, lp.chargeCurrents)
-			lp.publish("activePhases", lp.activePhases)
+			lp.measuredPhases = phases
+			lp.log.DEBUG.Printf("detected phases: %dp %.3gA", lp.measuredPhases, lp.chargeCurrents)
+			lp.publish("activePhases", lp.measuredPhases)
 		}
 	}
 }

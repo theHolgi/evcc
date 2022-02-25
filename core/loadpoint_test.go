@@ -296,13 +296,13 @@ func TestPVHysteresis(t *testing.T) {
 
 			Voltage = 100
 			lp := &LoadPoint{
-				log:          util.NewLogger("foo"),
-				clock:        clck,
-				charger:      charger,
-				MinCurrent:   minA,
-				MaxCurrent:   maxA,
-				Phases:       10,
-				activePhases: 10,
+				log:            util.NewLogger("foo"),
+				clock:          clck,
+				charger:        charger,
+				MinCurrent:     minA,
+				MaxCurrent:     maxA,
+				Phases:         10,
+				measuredPhases: 10,
 				Enable: ThresholdConfig{
 					Threshold: tc.enable,
 					Delay:     dt,
@@ -343,12 +343,12 @@ func TestPVHysteresisForStatusOtherThanC(t *testing.T) {
 
 	Voltage = 100
 	lp := &LoadPoint{
-		log:          util.NewLogger("foo"),
-		clock:        clck,
-		MinCurrent:   minA,
-		MaxCurrent:   maxA,
-		Phases:       10,
-		activePhases: 10,
+		log:            util.NewLogger("foo"),
+		clock:          clck,
+		MinCurrent:     minA,
+		MaxCurrent:     maxA,
+		Phases:         10,
+		measuredPhases: 10,
 	}
 
 	// not connected, test PV mode logic  short-circuited
@@ -832,12 +832,12 @@ func TestScalePhases(t *testing.T) {
 	Voltage = 230 // V
 
 	tc := []struct {
-		desc                 string
-		phases, activePhases int
-		availablePower       float64
-		toPhases             int
-		res                  bool
-		prepare              func(lp *LoadPoint)
+		desc                   string
+		phases, measuredPhases int
+		availablePower         float64
+		toPhases               int
+		res                    bool
+		prepare                func(lp *LoadPoint)
 	}{
 		// switch up from 1p/1p configured/active
 		{"1/1->3, not enough power", 1, 1, 0, 1, false, nil},
@@ -905,13 +905,13 @@ func TestScalePhases(t *testing.T) {
 		clock := clock.NewMock()
 
 		lp := &LoadPoint{
-			log:          util.NewLogger("foo"),
-			clock:        clock,
-			charger:      charger,
-			MinCurrent:   minA,
-			MaxCurrent:   maxA,
-			Phases:       tc.phases,
-			activePhases: tc.activePhases,
+			log:            util.NewLogger("foo"),
+			clock:          clock,
+			charger:        charger,
+			MinCurrent:     minA,
+			MaxCurrent:     maxA,
+			Phases:         tc.phases,
+			measuredPhases: tc.measuredPhases,
 			Enable: ThresholdConfig{
 				Delay: dt,
 			},

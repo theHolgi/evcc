@@ -19,9 +19,9 @@ func (lp *LoadPoint) setPhases(phases int) {
 	}
 }
 
-// effectivePhases returns the number of expectedly active phases for the meter.
+// activePhases returns the number of expectedly active phases for the meter.
 // If unknown for 1p3p chargers during startup it will assume 1p.
-func (lp *LoadPoint) effectivePhases() int {
+func (lp *LoadPoint) activePhases() int {
 	const unknownPhases = 1
 
 	vehicle := lp.vehicleCapablePhases()
@@ -49,8 +49,8 @@ func (lp *LoadPoint) vehicleCapablePhases() int {
 
 	// if vehicle is charging >1p then assume that is the
 	// number of phases that the vehicle can use
-	if lp.activePhases > 1 {
-		return lp.activePhases
+	if lp.measuredPhases > 1 {
+		return lp.measuredPhases
 	}
 
 	return 0
@@ -106,23 +106,24 @@ func (lp *LoadPoint) pvScalePhases(availablePower, minCurrent, maxCurrent float6
 	phases := lp.GetPhases()
 
 	// observed phase state inconsistency (https://github.com/evcc-io/evcc/issues/1572, https://github.com/evcc-io/evcc/issues/2230)
-	if phases > 0 && phases < lp.activePhases {
-		lp.log.WARN.Printf("ignoring inconsistent phases: %dp < %dp observed active", phases, lp.activePhases)
+	if phases > 0 && phases < lp.measuredPhases {
+		lp.log.WARN.Printf("ignoring inconsistent phases: %dp < %dp observed active", phases, lp.measuredPhases)
 	}
 
 	// this can happen the first time for a 1p3p-capable charger, see https://github.com/evcc-io/evcc/issues/2520
-	if phases == 0 && lp.activePhases == 0 {
-		lp.log.DEBUG.Printf("assuming initial phase state: 3p")
-		lp.phaseTimer = elapsed
-		lp.activePhases = 3
-	}
+	// if phases == 0 && lp.activePhases == 0 {
+	// 	lp.log.DEBUG.Printf("assuming initial phase state: 3p")
+	// 	lp.phaseTimer = elapsed
+	// 	lp.activePhases = 3
+	// }
 
 	var waiting bool
-	targetCurrent := powerToCurrent(availablePower, lp.activePhases)
+	activePhases := lp.activePhases()
+	targetCurrent := powerToCurrent(availablePower, activePhases)
 
 	// scale down phases
-	if targetCurrent < minCurrent && (phases == 0 || phases == 3) && lp.activePhases > 1 {
-		lp.log.DEBUG.Printf("available power below %dp min threshold of %.0fW", lp.activePhases, float64(lp.activePhases)*Voltage*minCurrent)
+	if targetCurrent < minCurrent && (phases == 0 || phases == 3) && activePhases > 1 {
+		lp.log.DEBUG.Printf("available power below %dp min threshold of %.0fW", activePhases, float64(activePhases)*Voltage*minCurrent)
 
 		if lp.phaseTimer.IsZero() {
 			lp.log.DEBUG.Printf("start phase disable timer: %v", lp.Disable.Delay)
