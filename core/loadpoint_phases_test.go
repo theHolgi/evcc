@@ -3,6 +3,7 @@ package core
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	evbus "github.com/asaskevich/EventBus"
 	"github.com/benbjohnson/clock"
@@ -64,9 +65,7 @@ func TestEffectivePhases(t *testing.T) {
 		{0, 3, 3, 0, 3},
 	}
 
-	scaleDown := []struct {
-		capable, physical, vehicle, previousActive, expected int
-	}{
+	scaleDown := []struct{ capable, physical, vehicle, previousActive, expected int }{
 		// 1p3p initial
 		{0, 0, 0, 2, 2}, // TODO gelbe Markierung
 		{0, 0, 0, 3, 3}, // TODO gelbe Markierung
@@ -75,6 +74,22 @@ func TestEffectivePhases(t *testing.T) {
 		// 1p3p, 1 currently active
 		{0, 1, 0, 2, 2},
 		{0, 1, 0, 3, 3},
+		// 1p3p, 3 currently active
+		{0, 3, 0, 2, 2},
+		{0, 3, 0, 3, 3},
+		{0, 3, 2, 0, 2},
+		{0, 3, 3, 0, 3},
+	}
+
+	scaleUp := []struct{ capable, physical, vehicle, previousActive, expected int }{
+		// 1p3p initial
+		{0, 0, 0, 1, 1},
+		{0, 0, 2, 0, 2},
+		{0, 0, 3, 0, 3},
+		// 1p3p, 1 currently active
+		{0, 1, 0, 0, unknownPhases},
+		{0, 1, 2, 0, 1},
+		{0, 1, 3, 0, 1},
 		// 1p3p, 3 currently active
 		{0, 3, 0, 2, 2},
 		{0, 3, 0, 3, 3},
@@ -135,15 +150,31 @@ func TestEffectivePhases(t *testing.T) {
 			t.Errorf("expected %d, got %d", tc.expected, phs)
 		}
 
-		// check scale down
+		// scaling
 		if charger.MockChargePhases != nil {
+			// scale down
 			for _, tc2 := range scaleDown {
 				if reflect.DeepEqual(tc, tc2) {
 					charger.MockCharger.EXPECT().Enable(false).Return(nil)
 					charger.MockChargePhases.EXPECT().Phases1p3p(1).Return(nil)
 
-					if !lp.pvScalePhases(-4*minA*Voltage, minA, maxA) {
+					if !lp.pvScalePhases(1*minA*Voltage, minA, maxA) {
 						t.Errorf("%v missing scale down", tc)
+					}
+
+					break
+				}
+			}
+
+			// scale up
+			lp.phaseTimer = time.Time{}
+			for _, tc2 := range scaleUp {
+				if reflect.DeepEqual(tc, tc2) {
+					charger.MockCharger.EXPECT().Enable(false).Return(nil)
+					charger.MockChargePhases.EXPECT().Phases1p3p(3).Return(nil)
+
+					if !lp.pvScalePhases(3*minA*Voltage, minA, maxA) {
+						t.Errorf("%v missing scale up", tc)
 					}
 
 					break
