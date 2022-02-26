@@ -35,6 +35,7 @@ import (
 // GoE charger implementation
 type GoE struct {
 	api goe.API
+	log *util.Logger
 }
 
 func init() {
@@ -70,6 +71,7 @@ func NewGoE(uri, token string, cache time.Duration) (api.Charger, error) {
 	c := &GoE{}
 
 	log := util.NewLogger("go-e").Redact(token)
+	c.log = log
 
 	if token != "" {
 		c.api = goe.NewCloud(log, token, cache)
@@ -137,7 +139,8 @@ func (c *GoE) Enable(enable bool) error {
 
 // MaxCurrent implements the api.Charger interface
 func (c *GoE) MaxCurrent(current int64) error {
-	param := map[bool]string{false: "amx", true: "amp"}[c.api.IsV2()]
+	param := map[bool]string{false: "amp", true: "amx"}[c.api.IsV2()]
+	c.log.INFO.Printf(fmt.Sprintf("GO-E setting: %s=%d", param, current))
 	return c.api.Update(fmt.Sprintf("%s=%d", param, current))
 }
 
