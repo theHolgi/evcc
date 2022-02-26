@@ -20,15 +20,6 @@ type testCase struct {
 	capable, physical, vehicle, measuredPhases, expected int
 }
 
-func caseMatches(tc testCase, cases []testCase) bool {
-	for _, tc2 := range cases {
-		if reflect.DeepEqual(tc, tc2) {
-			return true
-		}
-	}
-	return false
-}
-
 var (
 	phaseTests = []testCase{
 		// 1p
@@ -113,6 +104,27 @@ var (
 	}
 )
 
+func caseMatches(tc testCase, cases []testCase) bool {
+	for _, tc2 := range cases {
+		if reflect.DeepEqual(tc, tc2) {
+			return true
+		}
+	}
+	return false
+}
+
+func testScale(t *testing.T, lp *LoadPoint, power float64, direction string, tc testCase, cases []testCase) {
+	scaled := lp.pvScalePhases(power, minA, maxA)
+
+	if caseMatches(tc, cases) {
+		if !scaled {
+			t.Errorf("%v missing scale %s", tc, direction)
+		}
+	} else if scaled {
+		t.Errorf("%v unexpected scale %s", tc, direction)
+	}
+}
+
 func TestPhaseHandling(t *testing.T) {
 	clock := clock.NewMock()
 	ctrl := gomock.NewController(t)
@@ -168,6 +180,7 @@ func TestPhaseHandling(t *testing.T) {
 		if phs := lp.activePhases(); phs != tc.expected {
 			t.Errorf("expected %d, got %d", tc.expected, phs)
 		}
+		ctrl.Finish()
 
 		// scaling
 		if charger.MockChargePhases != nil {
@@ -178,16 +191,7 @@ func TestPhaseHandling(t *testing.T) {
 			charger.MockCharger.EXPECT().Enable(false).Return(nil).MaxTimes(1)
 			charger.MockChargePhases.EXPECT().Phases1p3p(1).Return(nil).MaxTimes(1)
 
-			scaled := lp.pvScalePhases(min1p, minA, maxA)
-
-			if caseMatches(tc, scaleDown) {
-				if !scaled {
-					t.Errorf("%v missing scale down", tc)
-				}
-			} else if scaled {
-				t.Errorf("%v unexpected scale down", tc)
-			}
-
+			testScale(t, lp, min1p, "down", tc, scaleDown)
 			ctrl.Finish()
 
 			// scale up
@@ -197,19 +201,8 @@ func TestPhaseHandling(t *testing.T) {
 			charger.MockCharger.EXPECT().Enable(false).Return(nil).MaxTimes(1)
 			charger.MockChargePhases.EXPECT().Phases1p3p(3).Return(nil).MaxTimes(1)
 
-			scaled = lp.pvScalePhases(min3p, minA, maxA)
-
-			if caseMatches(tc, scaleUp) {
-				if !scaled {
-					t.Errorf("%v missing scale up", tc)
-				}
-			} else if scaled {
-				t.Errorf("%v unexpected scale up", tc)
-			}
-
+			testScale(t, lp, min3p, "up", tc, scaleUp)
 			ctrl.Finish()
 		}
-
-		ctrl.Finish()
 	}
 }
