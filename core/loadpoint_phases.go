@@ -1,7 +1,6 @@
 package core
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -10,21 +9,38 @@ import (
 
 // setPhases sets the number of enabled phases without modifying the charger
 func (lp *LoadPoint) setPhases(phases int) {
-	lp.Lock()
-	defer lp.Unlock()
-
-	if lp.Phases != phases {
+	if lp.GetPhases() != phases {
+		lp.Lock()
 		lp.Phases = phases
+		lp.Unlock()
 		lp.publish("phases", lp.Phases)
+
+		lp.resetMeasuredPhases()
 	}
 }
+
+// resetMeasuredPhases resets measured phases to unknown on vehicle disconnect, phase switch or phase api call
+func (lp *LoadPoint) resetMeasuredPhases() {
+	lp.Lock()
+	lp.measuredPhases = 0
+	lp.Unlock()
+
+	lp.publish("activePhases", lp.activePhases())
+}
+
+// getMeasuredPhases provides synchronized access to measuredPhases
+func (lp *LoadPoint) getMeasuredPhases() int {
+	lp.Lock()
+	defer lp.Unlock()
+	return lp.measuredPhases
+}
+
+// assume 3p for switchable charger during startup
+const unknownPhases = 3
 
 // activePhases returns the number of expectedly active phases for the meter.
 // If unknown for 1p3p chargers during startup it will assume 1p.
 func (lp *LoadPoint) activePhases() int {
-	// assume 3p for switchable charger during startup
-	const unknownPhases = 1
-
 	vehicle := lp.vehicleCapablePhases()
 	physical := lp.GetPhases()
 
@@ -33,9 +49,21 @@ func (lp *LoadPoint) activePhases() int {
 		return vehicle
 	}
 
-	// if we don't have a valid value yet assume phase configuration
-	if physical == 0 {
-		return unknownPhases
+	measured := lp.getMeasuredPhases()
+
+	// TODO check setPhases(1) during 3p charging and add testcase
+	if physical > 0 {
+		// if vehicle is charging <physical phases then assume that is the
+		// number of phases that the vehicle can use
+		if measured > 0 && measured < physical {
+			return measured
+		}
+
+		return physical
+	}
+
+	if measured > 0 {
+		return measured
 	}
 
 	// assume 3p if no better better value available
@@ -51,8 +79,8 @@ func (lp *LoadPoint) vehicleCapablePhases() int {
 
 	// if vehicle is charging >1p then assume that is the
 	// number of phases that the vehicle can use
-	if lp.measuredPhases > 1 {
-		return lp.measuredPhases
+	if phases := lp.getMeasuredPhases(); phases > 1 {
+		return phases
 	}
 
 	return 0
@@ -60,23 +88,19 @@ func (lp *LoadPoint) vehicleCapablePhases() int {
 
 // scalePhasesIfAvailable scales if api.ChargePhases is available
 func (lp *LoadPoint) scalePhasesIfAvailable(phases int) error {
-	err := lp.scalePhases(phases)
-	if errors.Is(err, api.ErrNotAvailable) {
-		return nil
+	if _, ok := lp.charger.(api.ChargePhases); ok {
+		return lp.scalePhases(phases)
 	}
-	return err
+
+	return api.ErrNotAvailable
 }
 
 // scalePhases adjusts the number of active phases and returns the appropriate charging current.
 // Returns api.ErrNotAvailable if api.ChargePhases is not available.
 func (lp *LoadPoint) scalePhases(phases int) error {
-	if phases != 1 && phases != 3 {
-		return fmt.Errorf("invalid number of phases: %d", phases)
-	}
-
 	cp, ok := lp.charger.(api.ChargePhases)
 	if !ok {
-		return api.ErrNotAvailable
+		panic("charger does not implement api.ChargePhases")
 	}
 
 	if lp.GetPhases() != phases {
@@ -108,8 +132,8 @@ func (lp *LoadPoint) pvScalePhases(availablePower, minCurrent, maxCurrent float6
 	phases := lp.GetPhases()
 
 	// observed phase state inconsistency (https://github.com/evcc-io/evcc/issues/1572, https://github.com/evcc-io/evcc/issues/2230)
-	if phases > 0 && phases < lp.measuredPhases {
-		lp.log.WARN.Printf("ignoring inconsistent phases: %dp < %dp observed active", phases, lp.measuredPhases)
+	if measuredPhases := lp.getMeasuredPhases(); phases > 0 && phases < measuredPhases {
+		lp.log.WARN.Printf("ignoring inconsistent phases: %dp < %dp observed active", phases, measuredPhases)
 	}
 
 	var waiting bool

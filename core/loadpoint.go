@@ -235,7 +235,6 @@ func NewLoadPointFromConfig(log *util.Logger, cp configProvider, other map[strin
 	lp.charger = cp.Charger(lp.ChargerRef)
 	lp.configureChargerType(lp.charger)
 
-	// ensure 1p setup for switchable charger (https://github.com/evcc-io/evcc/issues/1572)
 	// TODO handle delayed scale-down
 	if _, ok := lp.charger.(api.ChargePhases); ok && lp.GetPhases() != 0 {
 		lp.log.WARN.Printf("ignoring phases config (%dp) for switchable charger", lp.GetPhases())
@@ -426,8 +425,7 @@ func (lp *LoadPoint) evVehicleDisconnectHandler() {
 	lp.log.INFO.Println("car disconnected")
 
 	// phases are unknown when vehicle disconnects
-	lp.measuredPhases = 0
-	lp.publish("activePhases", lp.measuredPhases)
+	lp.resetMeasuredPhases()
 
 	// energy and duration
 	lp.publish("chargedEnergy", lp.chargedEnergy)
@@ -536,7 +534,7 @@ func (lp *LoadPoint) Prepare(uiChan chan<- util.Param, pushChan chan<- push.Even
 	lp.publish("minCurrent", lp.MinCurrent)
 	lp.publish("maxCurrent", lp.MaxCurrent)
 	lp.publish("phases", lp.Phases)
-	lp.publish("activePhases", lp.measuredPhases)
+	lp.publish("activePhases", lp.activePhases())
 	lp.publish("hasVehicle", len(lp.vehicles) > 0)
 
 	lp.Lock()
@@ -1162,9 +1160,12 @@ func (lp *LoadPoint) updateChargeCurrents() {
 		}
 
 		if phases >= 1 {
+			lp.Lock()
 			lp.measuredPhases = phases
-			lp.log.DEBUG.Printf("detected phases: %dp %.3gA", lp.measuredPhases, lp.chargeCurrents)
-			lp.publish("activePhases", lp.measuredPhases)
+			lp.Unlock()
+
+			lp.log.DEBUG.Printf("detected phases: %dp %.3gA", phases, lp.chargeCurrents)
+			lp.publish("activePhases", phases)
 		}
 	}
 }

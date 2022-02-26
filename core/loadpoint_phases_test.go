@@ -16,8 +16,8 @@ import (
 type testCase struct {
 	// capable=0 signals 1p3p as set during loadpoint init
 	// physical/vehicle=0 signals unknown
-	// previousActive<>0 signals previous measurement
-	capable, physical, vehicle, previousActive, expected int
+	// measuredPhases<>0 signals previous measurement
+	capable, physical, vehicle, measuredPhases, expected int
 }
 
 func caseMatches(tc testCase, cases []testCase) bool {
@@ -29,13 +29,8 @@ func caseMatches(tc testCase, cases []testCase) bool {
 	return false
 }
 
-func TestPhaseHandling(t *testing.T) {
-	const unknownPhases = 1
-
-	clock := clock.NewMock()
-	ctrl := gomock.NewController(t)
-
-	tcs := []testCase{
+var (
+	phaseTests = []testCase{
 		// 1p
 		{1, 1, 0, 0, 1},
 		{1, 1, 0, 1, 1},
@@ -51,15 +46,15 @@ func TestPhaseHandling(t *testing.T) {
 		{3, 3, 2, 0, 2},
 		{3, 3, 3, 0, 3},
 		// 1p3p initial
-		{0, 0, 0, 0, unknownPhases}, // TODO gelbe Markierung
-		{0, 0, 0, 1, 1},             // TODO gelbe Markierung
-		{0, 0, 0, 2, 2},             // TODO gelbe Markierung
-		{0, 0, 0, 3, 3},             // TODO gelbe Markierung
+		{0, 0, 0, 0, unknownPhases},
+		{0, 0, 0, 1, 1},
+		{0, 0, 0, 2, 2},
+		{0, 0, 0, 3, 3},
 		{0, 0, 1, 0, 1},
 		{0, 0, 2, 0, 2},
 		{0, 0, 3, 0, 3},
 		// 1p3p, 1 currently active
-		{0, 1, 0, 0, unknownPhases},
+		{0, 1, 0, 0, 1},
 		{0, 1, 0, 1, 1},
 		// {0, 1, 0, 2, 2}, // 2p active > 1p configured must not happen
 		// {0, 1, 0, 3, 3}, // 3p active > 1p configured must not happen
@@ -76,32 +71,35 @@ func TestPhaseHandling(t *testing.T) {
 		{0, 3, 3, 0, 3},
 	}
 
-	scaleDown := []testCase{
+	scaleDown = []testCase{
 		// 1p3p initial
-		{0, 0, 0, 2, 2}, // TODO gelbe Markierung
-		{0, 0, 0, 3, 3}, // TODO gelbe Markierung
+		{0, 0, 0, 0, unknownPhases},
+		{0, 0, 0, 2, 2},
+		{0, 0, 0, 3, 3},
 		{0, 0, 2, 0, 2},
 		{0, 0, 3, 0, 3},
 		// 1p3p, 1 currently active
 		{0, 1, 0, 2, 2},
 		{0, 1, 0, 3, 3},
 		// 1p3p, 3 currently active
+		{0, 3, 0, 0, unknownPhases},
 		{0, 3, 0, 2, 2},
 		{0, 3, 0, 3, 3},
 		{0, 3, 2, 0, 2},
 		{0, 3, 3, 0, 3},
 	}
 
-	scaleUp := []testCase{
+	scaleUp = []testCase{
 		// 1p3p initial
+		{0, 0, 0, 0, unknownPhases},
 		{0, 0, 0, 0, 1},
 		{0, 0, 0, 1, 1},
-		{0, 0, 0, 2, 2}, // TODO gelbe Markierung
-		{0, 0, 0, 3, 3}, // TODO gelbe Markierung
+		{0, 0, 0, 2, 2},
+		{0, 0, 0, 3, 3},
 		{0, 0, 2, 0, 2},
 		{0, 0, 3, 0, 3},
 		// 1p3p, 1 currently active
-		{0, 1, 0, 0, unknownPhases},
+		{0, 1, 0, 0, 1},
 		{0, 1, 0, 1, 1},
 		{0, 1, 2, 0, 1},
 		{0, 1, 3, 0, 1},
@@ -113,8 +111,13 @@ func TestPhaseHandling(t *testing.T) {
 		{0, 3, 2, 0, 2},
 		{0, 3, 3, 0, 3},
 	}
+)
 
-	for _, tc := range tcs {
+func TestPhaseHandling(t *testing.T) {
+	clock := clock.NewMock()
+	ctrl := gomock.NewController(t)
+
+	for _, tc := range phaseTests {
 		t.Log(tc)
 
 		var charger struct {
@@ -153,9 +156,8 @@ func TestPhaseHandling(t *testing.T) {
 
 		attachListeners(t, lp)
 
-		// TODO reset activePhases when vehicle disconnects
-		lp.measuredPhases = tc.previousActive
-		if tc.previousActive > 0 && tc.vehicle > 0 {
+		lp.measuredPhases = tc.measuredPhases
+		if tc.measuredPhases > 0 && tc.vehicle > 0 {
 			t.Fatalf("%v invalid test case", tc)
 		}
 
@@ -176,15 +178,16 @@ func TestPhaseHandling(t *testing.T) {
 			charger.MockCharger.EXPECT().Enable(false).Return(nil).MaxTimes(1)
 			charger.MockChargePhases.EXPECT().Phases1p3p(1).Return(nil).MaxTimes(1)
 
+			scaled := lp.pvScalePhases(min1p, minA, maxA)
+
 			if caseMatches(tc, scaleDown) {
-				if !lp.pvScalePhases(min1p, minA, maxA) {
+				if !scaled {
 					t.Errorf("%v missing scale down", tc)
 				}
-			} else {
-				if lp.pvScalePhases(min1p, minA, maxA) {
-					t.Errorf("%v unexpected scale down", tc)
-				}
+			} else if scaled {
+				t.Errorf("%v unexpected scale down", tc)
 			}
+
 			ctrl.Finish()
 
 			// scale up
@@ -194,15 +197,16 @@ func TestPhaseHandling(t *testing.T) {
 			charger.MockCharger.EXPECT().Enable(false).Return(nil).MaxTimes(1)
 			charger.MockChargePhases.EXPECT().Phases1p3p(3).Return(nil).MaxTimes(1)
 
+			scaled = lp.pvScalePhases(min3p, minA, maxA)
+
 			if caseMatches(tc, scaleUp) {
-				if !lp.pvScalePhases(min3p, minA, maxA) {
+				if !scaled {
 					t.Errorf("%v missing scale up", tc)
 				}
-			} else {
-				if lp.pvScalePhases(min3p, minA, maxA) {
-					t.Errorf("%v unexpected scale up", tc)
-				}
+			} else if scaled {
+				t.Errorf("%v unexpected scale up", tc)
 			}
+
 			ctrl.Finish()
 		}
 

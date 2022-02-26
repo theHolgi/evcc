@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/evcc-io/evcc/api"
@@ -106,11 +107,16 @@ func (lp *LoadPoint) GetPhases() int {
 
 // SetPhases sets loadpoint enabled phases
 func (lp *LoadPoint) SetPhases(phases int) error {
-	if _, ok := lp.charger.(api.ChargePhases); !ok {
-		lp.setPhases(phases)
-		return nil
+	if phases != 1 && phases != 3 {
+		return fmt.Errorf("invalid number of phases: %d", phases)
 	}
-	return lp.scalePhases(phases)
+
+	if _, ok := lp.charger.(api.ChargePhases); ok {
+		return lp.scalePhases(phases)
+	}
+
+	lp.setPhases(phases)
+	return nil
 }
 
 // SetTargetCharge sets loadpoint charge targetSoC
